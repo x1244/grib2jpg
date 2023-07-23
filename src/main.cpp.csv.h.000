@@ -1,0 +1,75 @@
+#include <iostream>
+#include <chrono>
+#include <thread>
+#include <vector>
+#include <icecream.hpp>
+#include <csv.h>
+#include "jpeg_transfer.h"
+using namespace std;
+using namespace std::chrono;
+using namespace io;
+const int w = 1440;      //宽
+const int h = 721;       //高
+const int c = 3;         //分量
+const int p1 = w/2 + 1;  //0 -> 180
+const int p2 = w/2 - 1;  //-179.75 -> -0.25
+const double minu = -23.0378;
+const double maxu = 31.0522;
+const double minv = -24.9615;
+const double maxv = 23.7585;
+const int valuecolumn = 6;
+double stepValue(double minz, double maxz);
+std::uint8_t normal(double v, double minz, double maxz);
+void fetchComponent(CSVReader<7>& src, std::uint8_t* p, int count, double minz, double maxz);
+int main(int argc, char** argv)
+{
+    std::vector<std::uint8_t> buff(w*h*c);
+    std::vector<std::string> col_names{"T0", "T1", "Component"
+        , "Level", "Lmd", "B", "value"};
+
+    CSVReader<7> reader("z.csv");
+    reader.set_header("T0", "T1", "Component", "Level", "Lmd", "B", "value");
+    std::uint8_t* p = buff.data();
+    //U分量
+    double stepu = stepValue(minu, maxu);
+    IC();
+    for(int hp = 0; hp < h; ++hp){
+#if 0
+        //U分量  -179.25 -> -0.25
+        fetchComponent(reader, p + p1*c, p2, minu, stepu);
+//        std::this_thread::sleep_for(10ms);
+        //U分量  0.0 -> 180.
+        fetchComponent(reader, p, p1, minu, stepu);
+#else
+        fetchComponent(reader, p, w, minu, stepu);
+#endif
+        //next latitude
+        p += w*c;
+    }
+    IC();
+    //V分量
+    JpegTransfer jpeg;
+    jpeg.setSource(buff.data(), buff.size(), w, h, c);
+    jpeg.transferUpper();
+    jpeg.save("uv.jpg", 90);
+
+    return 0;
+}
+void fetchComponent(CSVReader<7>& src, std::uint8_t* p, int count, double minz, double step)
+{
+    std::string s1, s2, s3, s4;
+    double lmd, b, v;
+    while(src.read_row(s1, s2, s3, s4, lmd, b, v)){
+        *p = normal(v, minz, step);
+        p += c;
+        if(--count == 0) break;
+    }
+}
+double stepValue(double minz, double maxz)
+{
+    return (maxz - minz)/255.;
+}
+std::uint8_t normal(double v, double minz, double step)
+{
+    return static_cast<std::uint8_t>((v - minz)/step);
+}
