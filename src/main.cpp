@@ -1,134 +1,97 @@
+/**\file
+ *
+ * \brief GRIB2导出的csv分量转jpg图像
+ *
+ * grib2jpg --flip --shift -w 1440 -h 721 -c 2 -v -23.0378,31.0522 -v -24.9615,23.7585 -u 95 -s z.csv -o uv.jpg
+ */
 #include <iostream>
 #include <fstream>
-#include <chrono>
-#include <regex>
-#include <thread>
 #include <vector>
+#include <cxxopts.hpp>
 #include <icecream.hpp>
 #include "csv_component.h"
 #include "jpeg_transfer.h"
 using namespace std;
-using namespace std::chrono;
-const int w = 1440;      //宽
-const int h = 721;       //高
-const int c = 3;         //分量
-const int p1 = w/2 + 1;  //0 -> 180
-const int p2 = w/2 - 1;  //-179.75 -> -0.25
-const double minu = -23.0378;
-const double maxu = 31.0522;
-const double minv = -24.9615;
-const double maxv = 23.7585;
-const int valuecolumn = 6;
-std::regex rgx{R"(,(-?\d*\.?\d*)$)"}; //匹配最后的数值
-double stepValue(double minz, double maxz);
-std::uint8_t normal(double v, double minz, double maxz);
-/**\breif 提取经度条带
- *
- * \param is - 输入流
- * \param p - 目标缓冲区
- * \param cout - 提取点数
- * \param minz - 最小值
- * \param step - 分层值
+/**\brief 创建命令行参数
  */
-void fetchSegment(std::istream& is, std::uint8_t* p, int count, double minz, double step);
-void fetchCompent(std::istream& is, std::uint8_t* p, double minz, double maxz);
-void fetchCompentFlip(std::istream& is, std::uint8_t* p, double minz, double maxz);
+cxxopts::Options createOptions();
 int main(int argc, char** argv)
 {
-    std::vector<std::uint8_t> buff(w*h*c);
-    std::ifstream is("z.csv");
-    if(!is.is_open()){
-        cout <<"无法打开z.dat" <<endl;
+    bool flip = false;
+    bool shift = false;
+    int w, h, c;
+    int qulity;
+    double offset;
+    string csvfile, jpgfile;
+    std::vector<double> mm;
+    cxxopts::Options option = createOptions();
+    try{
+        cxxopts::ParseResult pr = option.parse(argc, argv);
+        if(pr.count("flip")) flip = true;
+        if(pr.count("shift")) shift = true;
+        w = pr["width"].as<int>();
+        h = pr["height"].as<int>();
+        c = pr["component"].as<int>();
+        csvfile = pr["input"].as<string>();
+        jpgfile = pr["output"].as<string>();
+        qulity = pr["qulity"].as<int>();
+        offset = pr["offset"].as<double>();
+        mm = pr["interval"].as<vector<double> >();
+    }
+    catch(std::exception& ex){
+        cout <<"ERROR:" <<ex.what() <<endl;
+        cout <<option.help() <<endl;
         return 0;
     }
-#if 0
-    std::uint8_t* p = buff.data();
-    //U分量
-    //fetchCompent(is, p, minu, maxu);
-    fetchCompentFlip(is, p, minu, maxu);
-    //V分量
-    //fetchCompent(is, p + 1, minv, maxv);
-    fetchCompentFlip(is, p + 1, minv, maxv);
-#endif
+    if(mm.size() < c*2){
+        cout <<"分量值域不匹配" <<endl;
+        return 0;
+    }
+
+    std::ifstream is(csvfile);
+    if(!is.is_open()){
+        cout <<"无法打开" <<csvfile <<endl;
+        return 0;
+    }
     CsvComponent cc;
-    cc.init(w, h);
+    cc.init(w, h, flip, shift, offset);
     try{
-        cc.fetchCompent(is, 0, minu, maxu);
-        cc.fetchCompent(is, 1, minv, maxu);
+        for(int ci = 0; ci < c; ++ci){
+            cc.fetchCompent(is, ci, mm[ci*c], mm[ci*c + 1]);
+        }
     }
     catch(std::exception& ex){
         cout <<ex.what() <<endl;
         return 0;
     }
     JpegTransfer jpeg;
-    jpeg.setSource(cc.buff(), cc.size(), w, h, c);
-    jpeg.transferUpper();
-    jpeg.save("uv.jpg", 90);
-    cout <<"图像已保存至uv.jpg" <<endl;
-
+    try{
+        jpeg.setSource(cc.buff(), cc.size(), w, h, c);
+        jpeg.transferUpper();
+        jpeg.save(jpgfile, qulity);
+    }
+    catch(std::exception& ex){
+        cout <<"ERROR:" <<ex.what() <<endl;
+        return 0;
+    }
+    cout <<"图像已保存至" <<jpgfile <<endl;
     return 0;
 }
-void fetchSegment(std::istream& is, std::uint8_t* p, int count, double minz, double step)
+cxxopts::Options createOptions()
 {
-    //正则表达式要慢很多，可查觉的慢
-#ifdef REGEX
-    std::smatch match;
-#endif
-    string linestr;
-    while(std::getline(is, linestr)){
-#ifdef REGEX
-        bool m = std::regex_search(linestr, match, rgx);
-        if(!m){
-            IC(linestr);
-            continue;
-        }
-        double v = std::stod(match[1]);
-#else
-        int pos = linestr.rfind(",");
-        if(pos == std::string::npos){
-            IC(linestr);
-            continue;
-        }
-        std::string vstr(linestr.substr(pos + 1));
-        double v = std::stod(vstr);
-#endif
-        *p = normal(v, minz, step);
-        p += c;
-        if(--count == 0) break;
-    }
-}
-double stepValue(double minz, double maxz)
-{
-    return (maxz - minz)/255.;
-}
-std::uint8_t normal(double v, double minz, double step)
-{
-    return static_cast<std::uint8_t>((v - minz)/step);
-}
-void fetchCompent(std::istream& is, std::uint8_t* p, double minz, double maxz)
-{
-    //U分量
-    double step = stepValue(minz, maxz);
-    for(int hp = 0; hp < h; ++hp){
-        //U分量  -179.25 -> -0.25
-        fetchSegment(is, p + p1*c, p2, minz, step);
-//        std::this_thread::sleep_for(10ms);
-        //U分量  0.0 -> 180.
-        fetchSegment(is, p, p1, minz, step);
-        //next latitude
-        p += w*c;
-    }
-}
-void fetchCompentFlip(std::istream& is, std::uint8_t* p, double minz, double maxz)
-{
-    p += (h - 1)*w*c;
-    double step = stepValue(minz, maxz);
-    for(int hp = h; hp > 0; --hp){
-        //-179.25 -> -0.25
-        fetchSegment(is, p + p1*c, p2, minz, step);
-        // 0.0 -> 180.
-        fetchSegment(is, p, p1, minz, step);
-        //next latitude
-        p -= w*c;
-    }
+    cxxopts::Options option("grib2jpg", "GRIB2导出的csv数据转jpg");
+    option.add_options()
+        ("flip", "flip up and down")
+        ("shift", "shift left and right")
+        ("s,input", "input csv file", cxxopts::value<string>())
+        ("o,output", "output jpeg file", cxxopts::value<string>())
+        ("c,component", "climate element components", cxxopts::value<int>())
+        ("v,interval", "min and max value intervals"
+            , cxxopts::value<std::vector<double> >())
+        ("u,qulity", "compress qulity", cxxopts::value<int>())
+        ("w,width", "horizontal pixels", cxxopts::value<int>())
+        ("h,height", "vertical pixels", cxxopts::value<int>())
+        ("t,offset", "offset of the value"
+            , cxxopts::value<double>()->default_value("0.0"));
+    return option;
 }
