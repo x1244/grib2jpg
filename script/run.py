@@ -2,14 +2,96 @@ import sys
 import pathlib
 import subprocess
 import re
+import json
 def level():
     return ["20 mb", "250 mb", "300 mb", "350 mb", "400 mb",
          "450 mb", "550 mb", "600 mb", "700 mb", "800 mb",
          "900 mb", "20 m above ground", "0.995 sigma level"]
 def component():
-    return ["UGRD|VGRD", "TMP", "RH"]
+    return ["TMP", "RH", "UGRD|VGRD"]
+class Cfg:
+    pass
+class Jpeg:
+    def setPixel(self, w, h):
+        self.w = w
+        self.h = h
+    def setUrange(self, mini, maxi):
+        self.umin = mini
+        self.umax = maxi
+    def setVrange(self, mini, maxi):
+        self.vmin = mini
+        self.vmax = maxi
+    def setDest(self, dest):
+        self.dest = dest
+    def setDateTime(self, dt):
+        self.dt = dt
+'''
+    def writeCfg(self):
+        cfg = pathlib.Path(self.dest).joinpath("cfg.json")
+        if cfg.is_file():
+            pathlib.Path.unlink(cfg)
+        elif cfg.is_dir():
+            raise OSError("config file cfg.json error")
+        print("confi write to file")
+        with open(str(cfg), 'w') as cfgfile:
+            for c in self.cfg:
+                cfgfile.write(c.umin, c.umax)
+#                if c.vmin != NONE:
+#                    cfgfile.write(c.vmin, c.vmax)
+'''
+    def jpegFile(self, c, ev):
+        ev = ev.replace(" ", "_")
+        ev = ev.replace(".", "p")
+        part = [self.dt, c.replace("|", "_"), ev]
+        ppp = pathlib.Path(self.dest).joinpath("_".join(part) + ".jpg")
+        self.jpeg = str(ppp)
+        return self.jpeg
+    def csvFilename(self):
+        csv = pathlib.Path(self.dest).joinpath("cmp.csv")
+        return str(csv)
+    def genCsv(self, filename, c, ev):
+        csv = pathlib.Path(self.dest).joinpath("cmp.csv")
+        if csv.is_file():
+            pathlib.Path.unlink(csv)
+        elif csv.is_dir():
+            raise OSError("CSV file cmp.csv error")
+        csvfile = str(csv)
+        cmd = ["wgrib2", "-match", c, "-if_fs", ev, "-csv", csvfile, filename]
+        subprocess.run(cmd, stdout = subprocess.PIPE)
+        return csvfile
+    def rangeStr(mini, maxi):
+        return ",".join([str(mini), str(maxi)])
+    def realizeCfg(self, c, ev):
+        cfg = Cfg()
+        cfg.datetag = self.dt
+        cfg.name = self.jpeg
+        cfg.umin = self.umin
+        cfg.umax = self.umax
+#        cfg.vmin = self.vmin
+#        cfg.vmax = self.vmax
 
-#class Value:
+    def toJpeg(self, cmd, filename, c, ev):
+        print("fetch component...")
+        csv = self.genCsv(filename, c, ev)
+        print("generate jpeg...")
+        subprocess.run(cmd)
+        self.realizeCfg(c, ev)
+    def uvToJpeg(self, filename, c, ev):
+        cmd = ["grib2jpg", "--flip", "--shift", 
+                "-w", str(self.w), "-h", str(self.h),
+                "-c", str(2), "-v", Jpeg.rangeStr(self.umin, self.umax),
+                "-v", Jpeg.rangeStr(self.vmin, self.vmax),
+                "-u", str(90), "-s", self.csvFilename(), 
+                "-o", self.jpegFile(c, ev)]
+        self.toJpeg(cmd, filename, c, ev)
+    def grayToJpeg(self, filename, c, ev):
+        cmd = ["grib2jpg", "--flip", "--shift", 
+                "-w", str(self.w), "-h", str(self.h),
+                "-c", str(1), "-v", Jpeg.rangeStr(self.umin, self.umax),
+                "-u", str(90), "-s", self.csvFilename(), 
+                "-o", self.jpegFile(c, ev)]
+        self.toJpeg(cmd, filename, c, ev)
+
 
 '''目录文件列表
 
@@ -49,16 +131,16 @@ def checkDir(root, dest):
 def availableGrib2(files):
     av = []
     for filename in files :
-        cmd = "wgrib2 " + str(filename)
+        cmd = ["wgrib2", str(filename)]
         cps = subprocess.run(cmd, stdout = subprocess.PIPE)
         if len(cps.stdout) != 0:
             av.append(str(filename))
     return av
 
 def detectDate(filename):
-    cmd = "wgrib2 -v \"" + filename + "\""
-    cps = subprocess.run(cmd, stdout = subprocess.PIPE)
-    lines = cps.stdout.decode('utf-8').split("\n")
+    cmd = ["wgrib2", "-v", filename]
+    cps = subprocess.run(cmd, stdout = subprocess.PIPE, encoding = "utf-8")
+    lines = cps.stdout.split("\n")
     for line in lines:
         res = re.search("d=(\d{10})", line)
         if res != None :
@@ -66,9 +148,9 @@ def detectDate(filename):
     return None
 
 def detectPixel(filename):
-    cmd = "wgrib2 -nxny \"" + filename + "\""
-    cps = subprocess.run(cmd, stdout = subprocess.PIPE)
-    lines = cps.stdout.decode('utf-8').split("\n")
+    cmd = ["wgrib2", "-nxny", filename]
+    cps = subprocess.run(cmd, stdout = subprocess.PIPE, encoding = "utf-8")
+    lines = cps.stdout.split("\n")
     for line in lines:
         res = re.search("(\d+) x (\d+)", line)
         if res != None :
@@ -76,9 +158,9 @@ def detectPixel(filename):
     return None
 
 def statsComponent(filename, cnn, ev):
-    cmd = "wgrib2 -match \"" + cnn + "\" -if_fs \"" + ev + "\" -stats " + "\""+ filename + "\"";
-    cps = subprocess.run(cmd, stdout = subprocess.PIPE)
-    lines = cps.stdout.decode('utf-8').split("\n")
+    cmd = ["wgrib2", "-match", cnn, "-if_fs", ev, "-stats", filename]
+    cps = subprocess.run(cmd, stdout = subprocess.PIPE, encoding = "utf-8")
+    lines = cps.stdout.split("\n")
     intervals = []
     for line in lines:
         res = re.search("min=(.+):max=(.+):", line)
@@ -87,21 +169,26 @@ def statsComponent(filename, cnn, ev):
             intervals.append(float(res.group(2)));
     return intervals
 
-def runGrib2(filename, datetag, width, height): 
-    cmd = "wgrib2 \"" + filename + "\""
+def runGrib2(filename, jpeg): 
+#    cmd = "wgrib2 \"" + filename + "\""
+    cmd = ["wgrib2", filename]   
     cps = subprocess.run(cmd, stdout = subprocess.PIPE)
     if len(cps.stdout) != 0:
+        print("process", filename)
         for c in component() :
             for v in level() :
                 intervals = statsComponent(filename, c, v)
                 if len(intervals) == 2:
-                    print(c, v, intervals[0], intervals[1])
+                    jpeg.setUrange(intervals[0], intervals[1])
+                    jpeg.grayToJpeg(filename, c, v)
                 elif len(intervals) == 4:
-                    print(c, v, intervals[0], intervals[1], intervals[2], intervals[3])
+                    jpeg.setUrange(intervals[0], intervals[1])
+                    jpeg.setVrange(intervals[2], intervals[3])
+                    jpeg.uvToJpeg(filename, c, v)
+        print("done.")
         #用str转bytes不好用
+#        cps = subprocess.run(cmd, stdout = subprocess.PIPE)
 #        lines = cps.stdout.decode('utf-8').split("\n")
-#        cmd2 = cmd + " -match TMP -
-#        cpts = subprocess.run(cmd, stdout = subprocess.PIPE)
 
 def main():
     if len(sys.argv) < 3 :
@@ -122,13 +209,21 @@ def main():
         print("未获得GRIB2文件时间标识")
         return
     pixel = detectPixel(available[0])
-    print(pixel)
     if pixel == None:
         print("未获得GRIB2扫描线")
         return
 
-    for filename in available :
-        runGrib2(filename, datetag, pixel[0], pixel[1])
+    jpeg = Jpeg()
+    jpeg.setDest(dest)
+    jpeg.setDateTime(datetag)
+    jpeg.setPixel(pixel[0], pixel[1])
+
+    try:
+        for filename in available :
+            runGrib2(filename, jpeg)
+    except OSError as ex:
+        print(ex)
+        return
 
 if __name__ == "__main__":
     main()
