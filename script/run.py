@@ -3,14 +3,72 @@ import pathlib
 import subprocess
 import re
 import json
+#Usage: ./run.py f:/xx/v f:/xx/p f:/xx/cfg.json climate
+# argv[1] - 输入文件夹
+# argv[2] - 输出文件夹
+# argv[3] - 配置文件输出
+# argv[4] - 配置中场源文件前缀目录
 def level():
     return ["20 mb", "250 mb", "300 mb", "350 mb", "400 mb",
          "450 mb", "550 mb", "600 mb", "700 mb", "800 mb",
          "900 mb", "20 m above ground", "0.995 sigma level"]
 def component():
     return ["TMP", "RH", "UGRD|VGRD"]
-class Cfg:
-    pass
+def comstr(c):
+    cs = {"TMP":"temperature", "RH":"rh", "UGRD|VGRD":"wind"}
+    return cs[c]
+def levelmap():
+    eh = {"20 mb":23307.0, "250 mb":10355.0, "300 mb":9157.0,
+          "350 mb":8111.0, "400 mb":7180.0, "450 mb":6339.0,
+          "550 mb":4861.0, "600 mb":4203.0,
+          "700 mb":3010.0, "800 mb":1947.0, "900 mb":987.0,
+          "20 m above ground":20.0, "0.995 sigma level":3.0}
+    evmp = []
+    for k, v in eh.items():
+        evmp.append({"name":k, "height":v})
+    return evmp
+
+def levelh(e):
+    eh = {"20 mb":23307.0, "250 mb":10355.0, "300 mb":9157.0,
+          "350 mb":8111.0, "400 mb":7180.0, "450 mb":6339.0,
+          "550 mb":4861.0, "600 mb":4203.0,
+          "700 mb":3010.0, "800 mb":1947.0, "900 mb":987.0,
+          "20 m above ground":20.0, "0.995 sigma level":3.0}
+    return eh[e]
+class CfgItem:
+    def setCv(self, c, v):
+        self.c = c
+        self.v = v
+    def setU(self, umin, umax):
+        self.umin = umin
+        self.umax = umax
+    def setV(self, vmin, vmax):
+        self.vmin = vmin
+        self.vmax = vmax
+    def setFile(self, name, dt):
+        self.name = name
+        self.dt = dt
+    def toMap(self, pxx):
+        ppp = pathlib.Path(self.name)
+        pbs = ppp.name
+        if len(pxx) != 0:
+            pbs = "/".join([pxx, pbs])
+        mpp = {}
+        if hasattr(self, 'vmin'):
+            mpp = {"src": pbs, "time":self.dt,
+                "umin":self.umin, "umax":self.umax,
+                "vmin":self.vmin, "vmax":self.vmax,
+                "left":-180.0, "right":180.0,
+                "bottom":-90.0, "top":90.0,
+                "level":levelh(self.v)}
+        else:
+            mpp = {"src": pbs, "time":self.dt,
+                "umin":self.umin, "umax":self.umax,
+                "left":-180.0, "right":180.0,
+                "bottom":-90.0, "top":90.0,
+                "level":levelh(self.v)}
+        return mpp
+
 class Jpeg:
     def setPixel(self, w, h):
         self.w = w
@@ -25,20 +83,6 @@ class Jpeg:
         self.dest = dest
     def setDateTime(self, dt):
         self.dt = dt
-'''
-    def writeCfg(self):
-        cfg = pathlib.Path(self.dest).joinpath("cfg.json")
-        if cfg.is_file():
-            pathlib.Path.unlink(cfg)
-        elif cfg.is_dir():
-            raise OSError("config file cfg.json error")
-        print("confi write to file")
-        with open(str(cfg), 'w') as cfgfile:
-            for c in self.cfg:
-                cfgfile.write(c.umin, c.umax)
-#                if c.vmin != NONE:
-#                    cfgfile.write(c.vmin, c.vmax)
-'''
     def jpegFile(self, c, ev):
         ev = ev.replace(" ", "_")
         ev = ev.replace(".", "p")
@@ -46,6 +90,7 @@ class Jpeg:
         ppp = pathlib.Path(self.dest).joinpath("_".join(part) + ".jpg")
         self.jpeg = str(ppp)
         return self.jpeg
+
     def csvFilename(self):
         csv = pathlib.Path(self.dest).joinpath("cmp.csv")
         return str(csv)
@@ -62,20 +107,20 @@ class Jpeg:
     def rangeStr(mini, maxi):
         return ",".join([str(mini), str(maxi)])
     def realizeCfg(self, c, ev):
-        cfg = Cfg()
-        cfg.datetag = self.dt
-        cfg.name = self.jpeg
-        cfg.umin = self.umin
-        cfg.umax = self.umax
-#        cfg.vmin = self.vmin
-#        cfg.vmax = self.vmax
+        cfg = CfgItem()
+        cfg.setFile(self.jpeg, self.dt)
+        cfg.setCv(c, ev)
+        cfg.setU(self.umin, self.umax)
+        if hasattr(self, 'vmin'):
+            cfg.setV(self.vmin, self.vmax)
+        return cfg;
 
     def toJpeg(self, cmd, filename, c, ev):
         print("fetch component...")
         csv = self.genCsv(filename, c, ev)
         print("generate jpeg...")
         subprocess.run(cmd)
-        self.realizeCfg(c, ev)
+        return self.realizeCfg(c, ev)
     def uvToJpeg(self, filename, c, ev):
         cmd = ["grib2jpg", "--flip", "--shift", 
                 "-w", str(self.w), "-h", str(self.h),
@@ -83,14 +128,14 @@ class Jpeg:
                 "-v", Jpeg.rangeStr(self.vmin, self.vmax),
                 "-u", str(90), "-s", self.csvFilename(), 
                 "-o", self.jpegFile(c, ev)]
-        self.toJpeg(cmd, filename, c, ev)
+        return self.toJpeg(cmd, filename, c, ev)
     def grayToJpeg(self, filename, c, ev):
         cmd = ["grib2jpg", "--flip", "--shift", 
                 "-w", str(self.w), "-h", str(self.h),
                 "-c", str(1), "-v", Jpeg.rangeStr(self.umin, self.umax),
                 "-u", str(90), "-s", self.csvFilename(), 
                 "-o", self.jpegFile(c, ev)]
-        self.toJpeg(cmd, filename, c, ev)
+        return self.toJpeg(cmd, filename, c, ev)
 
 
 '''目录文件列表
@@ -168,11 +213,14 @@ def statsComponent(filename, cnn, ev):
             intervals.append(float(res.group(1)));
             intervals.append(float(res.group(2)));
     return intervals
-
+#返回配置
 def runGrib2(filename, jpeg): 
 #    cmd = "wgrib2 \"" + filename + "\""
+    datetag = detectDate(filename)
+    jpeg.setDateTime(datetag)
     cmd = ["wgrib2", filename]   
     cps = subprocess.run(cmd, stdout = subprocess.PIPE)
+    cfg = []
     if len(cps.stdout) != 0:
         print("process", filename)
         for c in component() :
@@ -180,22 +228,42 @@ def runGrib2(filename, jpeg):
                 intervals = statsComponent(filename, c, v)
                 if len(intervals) == 2:
                     jpeg.setUrange(intervals[0], intervals[1])
-                    jpeg.grayToJpeg(filename, c, v)
+                    ci = jpeg.grayToJpeg(filename, c, v)
+                    cfg.append(ci)
                 elif len(intervals) == 4:
                     jpeg.setUrange(intervals[0], intervals[1])
                     jpeg.setVrange(intervals[2], intervals[3])
-                    jpeg.uvToJpeg(filename, c, v)
+                    ci = jpeg.uvToJpeg(filename, c, v)
+                    cfg.append(ci)
         print("done.")
+    return cfg
         #用str转bytes不好用
 #        cps = subprocess.run(cmd, stdout = subprocess.PIPE)
 #        lines = cps.stdout.decode('utf-8').split("\n")
 
+def dumpCfg(cfgfile, cfg, pxx):
+    ggg = {"level":levelmap()}
+    for ccc in cfg:
+        for ccp in ccc:
+            css = comstr(ccp.c)
+            cmm = ccp.toMap(pxx)
+            if css in ggg:
+                ggg[css].append(cmm)
+            else:
+                ggg[css] = [cmm]
+    with open (cfgfile, 'w') as fff:
+        json.dump(ggg, fff, indent=2)
+
 def main():
-    if len(sys.argv) < 3 :
-        print("Usage run.py root dest")
+    if len(sys.argv) < 4 :
+        print("Usage run.py root dest cfg climate")
         return
     root = sys.argv[1]
     dest = sys.argv[2]
+    cfgfile = sys.argv[3]
+    jpegpxx = ""
+    if len(sys.argv) > 4 :
+        jpegpxx = sys.argv[4]
     if not checkDir(root, dest) :
         return
 
@@ -215,15 +283,17 @@ def main():
 
     jpeg = Jpeg()
     jpeg.setDest(dest)
-    jpeg.setDateTime(datetag)
     jpeg.setPixel(pixel[0], pixel[1])
 
+    cfg = []
     try:
         for filename in available :
-            runGrib2(filename, jpeg)
+            ci = runGrib2(filename, jpeg)
+            cfg.append(ci)
     except OSError as ex:
         print(ex)
         return
+    dumpCfg(cfgfile, cfg, jpegpxx)
 
 if __name__ == "__main__":
     main()
