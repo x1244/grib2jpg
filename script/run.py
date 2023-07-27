@@ -47,16 +47,14 @@ class CfgItem:
         self.vmax = vmax
     def setFile(self, name, dt):
         self.name = name
-        self.dt = dt
+        self.dt = "".join([dt[:4], "-", dt[4:6], "-", dt[6:8], 
+              "T", dt[8:], ":00:00.000"])
     def toMap(self, pxx):
         ppp = pathlib.Path(self.name)
         pbs = ppp.name
-        pbs.insert(8, "T")  //time
-        pbs.insert(6, "-")  //month
-        pbs.insert(4, "-")  //year
-        pbs.append(":00:00.000")
         if len(pxx) != 0:
             pbs = "/".join([pxx, pbs])
+        tmx = self.dt
         mpp = {}
         if hasattr(self, 'vmin'):
             mpp = {"src": pbs, "time":self.dt,
@@ -123,7 +121,7 @@ class Jpeg:
         print("fetch component...")
         csv = self.genCsv(filename, c, ev)
         print("generate jpeg...")
-#        subprocess.run(cmd)
+        subprocess.run(cmd)
         return self.realizeCfg(c, ev)
     def uvToJpeg(self, filename, c, ev):
         cmd = ["grib2jpg", "--flip", "--shift", 
@@ -221,7 +219,6 @@ def statsComponent(filename, cnn, ev):
     return intervals
 #返回配置
 def runGrib2(filename, jpeg): 
-#    cmd = "wgrib2 \"" + filename + "\""
     datetag = detectDate(filename)
     jpeg.setDateTime(datetag)
     cmd = ["wgrib2", filename]   
@@ -250,13 +247,12 @@ def runGrib2(filename, jpeg):
 def dumpCfg(cfgfile, cfg, pxx):
     ggg = {"level":levelmap()}
     for ccc in cfg:
-        for ccp in ccc:
-            css = comstr(ccp.c)
-            cmm = ccp.toMap(pxx)
-            if css in ggg:
-                ggg[css].append(cmm)
-            else:
-                ggg[css] = [cmm]
+        css = comstr(ccc.c)
+        cmm = ccc.toMap(pxx)
+        if css in ggg:
+            ggg[css].append(cmm)
+        else:
+            ggg[css] = [cmm]
     with open (cfgfile, 'w') as fff:
         json.dump(ggg, fff, indent=2)
 
@@ -296,16 +292,17 @@ def main():
     try:
         for filename in available :
             ci = runGrib2(filename, jpeg)
-            cfg.append(ci)
+            cfg.extend(ci)
     except OSError as ex:
         print(ex)
         return
     dumpCfg(cfgfile, cfg, jpegpxx)
 
     csvfile = jpeg.csvFilename()
-    if pathlib.Path.exists(csvfile) :
+    if pathlib.Path(csvfile).exists() :
         pathlib.Path.unlink(csvfile)
         print("CLEAN csv file")
+    print(len(allfiles), "files", len(cfg), "features processed.")
 
 if __name__ == "__main__":
     main()
