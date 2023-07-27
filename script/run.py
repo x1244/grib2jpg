@@ -51,6 +51,10 @@ class CfgItem:
     def toMap(self, pxx):
         ppp = pathlib.Path(self.name)
         pbs = ppp.name
+        pbs.insert(8, "T")  //time
+        pbs.insert(6, "-")  //month
+        pbs.insert(4, "-")  //year
+        pbs.append(":00:00.000")
         if len(pxx) != 0:
             pbs = "/".join([pxx, pbs])
         mpp = {}
@@ -119,7 +123,7 @@ class Jpeg:
         print("fetch component...")
         csv = self.genCsv(filename, c, ev)
         print("generate jpeg...")
-        subprocess.run(cmd)
+#        subprocess.run(cmd)
         return self.realizeCfg(c, ev)
     def uvToJpeg(self, filename, c, ev):
         cmd = ["grib2jpg", "--flip", "--shift", 
@@ -148,6 +152,8 @@ def filelist(root):
     for fn in pathlib.Path(root).iterdir():
         if fn.is_file():
             files.append(fn)
+        elif fn.is_dir():
+            files.extend(filelist(fn))
     return files
 '''检查输入输出目录是否正确
 
@@ -267,7 +273,8 @@ def main():
     if not checkDir(root, dest) :
         return
 
-    available = availableGrib2(filelist(root))
+    allfiles = filelist(root)
+    available = availableGrib2(allfiles)
     if len(available) == 0:
         print("未获得有效GRIB2文件")
         return
@@ -294,6 +301,11 @@ def main():
         print(ex)
         return
     dumpCfg(cfgfile, cfg, jpegpxx)
+
+    csvfile = jpeg.csvFilename()
+    if pathlib.Path.exists(csvfile) :
+        pathlib.Path.unlink(csvfile)
+        print("CLEAN csv file")
 
 if __name__ == "__main__":
     main()
