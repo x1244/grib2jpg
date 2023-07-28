@@ -28,13 +28,6 @@ def levelmap():
         evmp.append({"name":k, "height":v})
     return evmp
 
-def levelh(e):
-    eh = {"20 mb":23307.0, "250 mb":10355.0, "300 mb":9157.0,
-          "350 mb":8111.0, "400 mb":7180.0, "450 mb":6339.0,
-          "550 mb":4861.0, "600 mb":4203.0,
-          "700 mb":3010.0, "800 mb":1947.0, "900 mb":987.0,
-          "20 m above ground":20.0, "0.995 sigma level":3.0}
-    return eh[e]
 class CfgItem:
     def setCv(self, c, v):
         self.c = c
@@ -62,13 +55,13 @@ class CfgItem:
                 "vmin":self.vmin, "vmax":self.vmax,
                 "left":-180.0, "right":180.0,
                 "bottom":-90.0, "top":90.0,
-                "level":levelh(self.v)}
+                "level":self.v}
         else:
             mpp = {"src": pbs, "time":self.dt,
                 "umin":self.umin, "umax":self.umax,
                 "left":-180.0, "right":180.0,
                 "bottom":-90.0, "top":90.0,
-                "level":levelh(self.v)}
+                "level":self.v}
         return mpp
 
 class Jpeg:
